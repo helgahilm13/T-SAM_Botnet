@@ -253,8 +253,7 @@ int clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   }
 }
 
-void listenServer(int serverSocket)
-{
+/*{
     int nread;                                  // Bytes read from socket
     char buffer[5000];                          // Buffer for reading input
 
@@ -272,6 +271,7 @@ void listenServer(int serverSocket)
        {
           printf("%s\n", buffer);
        }
+}*/
 
 
 int main(int argc, char* argv[])
