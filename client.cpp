@@ -39,7 +39,7 @@ void listenServer(int serverSocket)
        memset(buffer, 0, sizeof(buffer));
        nread = read(serverSocket, buffer, sizeof(buffer));
 
-       if(nread < 0)                      // Server has dropped us
+       if(nread == 0)                      // Server has dropped us
        {
           printf("Over and Out\n");
           exit(0);
@@ -48,13 +48,14 @@ void listenServer(int serverSocket)
        {
           printf("%s\n", buffer);
        }
+       printf("here\n");
     }
 }
 
 int main(int argc, char* argv[])
 {
    struct addrinfo hints, *svr;              // Network host entry for server
-   struct sockaddr_in server_addr;           // Socket address for server
+   struct sockaddr_in serv_addr;           // Socket address for server
    int serverSocket;                         // Socket used for server 
    int nwrite;                               // No. bytes written to server
    char buffer[1025];                        // buffer for writing to server
@@ -70,7 +71,6 @@ int main(int argc, char* argv[])
 
    hints.ai_family   = AF_INET;            // IPv4 only addresses
    hints.ai_socktype = SOCK_STREAM;
-   hints.ai_flags    = AI_PASSIVE;
 
    memset(&hints,   0, sizeof(hints));
 
@@ -80,7 +80,17 @@ int main(int argc, char* argv[])
        exit(0);
    }
 
-   serverSocket = socket(svr->ai_family, svr->ai_socktype, svr->ai_protocol);
+   struct hostent *server;
+   server = gethostbyname(argv[1]);
+
+   bzero((char *) &serv_addr, sizeof(serv_addr));
+   serv_addr.sin_family = AF_INET;
+   bcopy((char *)server->h_addr,
+      (char *)&serv_addr.sin_addr.s_addr,
+      server->h_length);
+   serv_addr.sin_port = htons(atoi(argv[2]));
+
+   serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 
    // Turn on SO_REUSEADDR to allow socket to be quickly reused after 
    // program exit.
@@ -91,7 +101,8 @@ int main(int argc, char* argv[])
        perror("setsockopt failed: ");
    }
 
-   if(connect(serverSocket, svr->ai_addr, svr->ai_addrlen )< 0)
+   
+   if(connect(serverSocket, (struct sockaddr *)&serv_addr, sizeof(serv_addr) )< 0)
    {
        printf("Failed to open socket to server: %s\n", argv[1]);
        perror("Connect failed: ");

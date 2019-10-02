@@ -26,8 +26,12 @@
 #include <thread>
 #include <map>
 
+#include <unistd.h>
+
+// fix SOCK_NONBLOCK for OSX
 #ifndef SOCK_NONBLOCK
 #include <fcntl.h>
+#define SOCK_NONBLOCK O_NONBLOCK
 #endif
 
 #define BACKLOG  5          // Allowed length of queue of waiting connections
@@ -46,16 +50,6 @@ class Client
     ~Client(){}            // Virtual destructor defined for base class
 };
 
-class Server
-{
-  public:
-    int sock;              // socket of client connection
-    std::string name;           // Limit length of name of client's user
-
-    Server(int socket) : sock(socket){} 
-
-    ~Server(){}            // Virtual destructor defined for base class
-};
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -64,8 +58,6 @@ class Server
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
-std::map<int, Server*> servers; // Lookup table for per Server information
-
 
 // Open socket for specified port.
 //
@@ -79,27 +71,19 @@ int open_socket(int portno)
 
    // Create socket for connection. Set to be non-blocking, so recv will
    // return immediately if there isn't anything waiting to be read.
-
-   #ifndef SOCK_NONBLOCK
-      if((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-      {
-         perror("Failed to open socket");
-         return(-1);
-      }
-
-      int flags = fcntl(sock, F_GETFL, 0);
-
-      if(fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0)
-      {
-         perror("Failed to set O_NONBLOCK");
-      }
-   #else
-      if((sock = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK , IPPROTO_TCP)) < 0)
-      {
-         perror("Failed to open socket");
-         return(-1);
-      }
-    #endif
+#ifdef __APPLE__     
+   if((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+   {
+      perror("Failed to open socket");
+      return(-1);
+   }
+#else
+   if((sock = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0)
+   {
+     perror("Failed to open socket");
+    return(-1);
+   }
+#endif
 
    // Turn on SO_REUSEADDR to allow socket to be quickly reused after 
    // program exit.
@@ -108,7 +92,13 @@ int open_socket(int portno)
    {
       perror("Failed to set SO_REUSEADDR:");
    }
-
+   set = 1;
+#ifdef __APPLE__     
+   if(setsockopt(sock, SOL_SOCKET, SOCK_NONBLOCK, &set, sizeof(set)) < 0)
+   {
+     perror("Failed to set SOCK_NOBBLOCK");
+   }
+#endif
    memset(&sk_addr, 0, sizeof(sk_addr));
 
    sk_addr.sin_family      = AF_INET;
@@ -127,29 +117,6 @@ int open_socket(int portno)
       return(sock);
    }
 }
-
-void listenServer(int serverSocket)
-{
-    int nread;                                  // Bytes read from socket
-    char buffer[5000];                          // Buffer for reading input
-
-    while(true)
-    {
-       memset(buffer, 0, sizeof(buffer));
-       nread = read(serverSocket, buffer, sizeof(buffer));
-
-       if(nread < 0)                      // Server has dropped us
-       {
-          printf("cant read response\n");
-          exit(0);
-       }
-       else if(nread > 0)
-       {
-          printf("%s\n", buffer);
-       }
-    }
-}
-
 
 // Close a client's connection, remove it from the client list, and
 // tidy up select sockets afterwards.
@@ -178,7 +145,7 @@ void closeClient(int clientSocket, fd_set *openSockets, int *maxfds)
 
 // Process command from client on the server
 
-int clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
+void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
                   char *buffer) 
 {
   std::vector<std::string> tokens;
@@ -251,28 +218,8 @@ int clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   {
       std::cout << "Unknown command from client:" << buffer << std::endl;
   }
+     
 }
-
-/*{
-    int nread;                                  // Bytes read from socket
-    char buffer[5000];                          // Buffer for reading input
-
-    while(true)
-    {
-       memset(buffer, 0, sizeof(buffer));
-       nread = read(serverSocket, buffer, sizeof(buffer));
-
-       if(nread < 0)                      // Server has dropped us
-       {
-          printf("Can't read! \n");
-          exit(0);
-       }
-       else if(nread > 0)
-       {
-          printf("%s\n", buffer);
-       }
-}*/
-
 
 int main(int argc, char* argv[])
 {
@@ -286,7 +233,6 @@ int main(int argc, char* argv[])
     struct sockaddr_in client;
     socklen_t clientLen;
     char buffer[1025];              // buffer for reading from clients
-
 
     if(argc != 2)
     {
@@ -307,6 +253,7 @@ int main(int argc, char* argv[])
     else 
     // Add listen socket to socket set we are monitoring
     {
+        FD_ZERO(&openSockets);
         FD_SET(listenSock, &openSockets);
         maxfds = listenSock;
     }
@@ -334,12 +281,12 @@ int main(int argc, char* argv[])
             {
                clientSock = accept(listenSock, (struct sockaddr *)&client,
                                    &clientLen);
-
+               printf("accept***\n");
                // Add new client to the list of open sockets
                FD_SET(clientSock, &openSockets);
 
                // And update the maximum file descriptor
-               maxfds = std::max(maxfds, clientSock);
+               maxfds = std::max(maxfds, clientSock) ;
 
                // create a new client to store information.
                clients[clientSock] = new Client(clientSock);
