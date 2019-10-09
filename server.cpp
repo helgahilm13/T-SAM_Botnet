@@ -50,17 +50,6 @@ class Client
     ~Client(){}            // Virtual destructor defined for base class
 };
 
-class Server
-{
-  public:
-    int sock;                   // socket of server connection
-    bool ifClient;              // is it client or server?
-    std::string name;           // Limit length of name of server user
-
-    Server(int socket) : sock(socket){} 
-
-    ~Server(){}            // Virtual destructor defined for base class
-};
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -69,7 +58,6 @@ class Server
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
-std::map<int, Server*> servers; // Lookup table for per Server information
 
 // Open socket for specified port.
 //
@@ -155,28 +143,6 @@ void closeClient(int clientSocket, fd_set *openSockets, int *maxfds)
      FD_CLR(clientSocket, openSockets);
 }
 
-void closeServer(int serverSocket, fd_set *openSockets, int *maxfds)
-{
-     // Remove client from the clients list
-     servers.erase(serverSocket);
-
-     // If this client's socket is maxfds then the next lowest
-     // one has to be determined. Socket fd's can be reused by the Kernel,
-     // so there aren't any nice ways to do this.
-
-     if(*maxfds == serverSocket)
-     {
-        for(auto const& p : servers)
-        {
-            *maxfds = std::max(*maxfds, p.second->sock);
-        }
-     }
-
-     // And remove from the list of open sockets.
-
-     FD_CLR(serverSocket, openSockets);
-}
-
 // Process command from client on the server
 
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
@@ -255,87 +221,11 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
      
 }
 
-void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
-                  char *buffer) 
-{
-  std::vector<std::string> tokens;
-  std::string token;
-
-  // Split command from client into tokens for parsing
-  std::stringstream stream(buffer);
-
-  while(stream >> token)
-      tokens.push_back(token);
-
-  if((tokens[0].compare("LISTSERVERS") == 0) && (tokens.size() == 2))
-  {
-     servers[serverSocket]->name = tokens[1];
-  }
-  else if(tokens[0].compare("LEAVE") == 0)
-  {
-      // Close the socket, and leave the socket handling
-      // code to deal with tidying up clients etc. when
-      // select() detects the OS has torn down the connection.
- 
-      //closeClient(clientSocket, openSockets, maxfds);
-  }
-  else if(tokens[0].compare("WHO") == 0)
-  {
-     std::cout << "Who is logged on" << std::endl;
-     std::string msg;
-
-     for(auto const& names : servers)
-     {
-        msg += names.second->name + ",";
-
-     }
-     // Reducing the msg length by 1 loses the excess "," - which
-     // granted is totally cheating.
-     send(serverSocket, msg.c_str(), msg.length()-1, 0);
-  }
-  // This is slightly fragile, since it's relying on the order
-  // of evaluation of the if statement.
-  else if((tokens[0].compare("MSG") == 0) && (tokens[1].compare("ALL") == 0))
-  {
-      std::string msg;
-      for(auto i = tokens.begin()+2;i != tokens.end();i++) 
-      {
-          msg += *i + " ";
-      }
-
-      for(auto const& pair : clients)
-      {
-          send(pair.second->sock, msg.c_str(), msg.length(),0);
-      }
-  }
-  else if(tokens[0].compare("MSG") == 0)
-  {
-      for(auto const& pair : clients)
-      {
-          if(pair.second->name.compare(tokens[1]) == 0)
-          {
-              std::string msg;
-              for(auto i = tokens.begin()+2;i != tokens.end();i++) 
-              {
-                  msg += *i + " ";
-              }
-              send(pair.second->sock, msg.c_str(), msg.length(),0);
-          }
-      }
-  }
-  else
-  {
-      std::cout << "Unknown command from server:" << buffer << std::endl;
-  }
-     
-}
-
 int main(int argc, char* argv[])
 {
     bool finished;
     int listenSock;                 // Socket for connections to server
     int clientSock;                 // Socket of connecting client
-    int listenServerSock;           // Socket connecting for server
     fd_set openSockets;             // Current open sockets 
     fd_set readSockets;             // Socket list for select()        
     fd_set exceptSockets;           // Exception socket list
@@ -346,7 +236,7 @@ int main(int argc, char* argv[])
 
     if(argc != 2)
     {
-        printf("Client usage: chat_server <ip client port> \n");
+        printf("Usage: chat_server <ip port>\n");
         exit(0);
     }
 
@@ -367,23 +257,6 @@ int main(int argc, char* argv[])
         FD_SET(listenSock, &openSockets);
         maxfds = listenSock;
     }
-
-   /* listenServerSock = open_socket(atoi(argv[1])); 
-    printf("Listening on port: %d\n", atoi(argv[2]));
-
-    if(listen(listenServerSock, BACKLOG) < 0)
-    {
-        printf("Listen failed on port %s\n", argv[2]);
-        exit(0);
-    }
-    else 
-    // Add listen socket to socket set we are monitoring
-    {
-        FD_ZERO(&openSockets);
-        FD_SET(listenServerSock, &openSockets);
-        maxfds = listenServerSock;
-        
-    }*/
 
     finished = false;
 
@@ -421,7 +294,7 @@ int main(int argc, char* argv[])
                // Decrement the number of sockets waiting to be dealt with
                n--;
 
-               printf("Client connected on server: %d\n", atoi(argv[1]));
+               printf("Client connected on server: %d\n", clientSock);
             }
             // Now check for commands from clients
             while(n-- > 0)
