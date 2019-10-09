@@ -238,7 +238,7 @@ int main(int argc, char* argv[])
     bool finished;
     int listenSock;                 // Socket for connections to server
     int clientSock;                 // Socket of connecting client
-    int serverSock;                 // Socket connecting for server
+    int listenServerSock;           // Socket connecting for server
     fd_set openSockets;             // Current open sockets 
     fd_set readSockets;             // Socket list for select()        
     fd_set exceptSockets;           // Exception socket list
@@ -269,6 +269,27 @@ int main(int argc, char* argv[])
         FD_ZERO(&openSockets);
         FD_SET(listenSock, &openSockets);
         maxfds = listenSock;
+    }
+
+    listenServerSock = open_socket(atoi(argv[1])); 
+    printf("Listening on port: %d\n", atoi(argv[1]));
+
+    if(listen(listenSock, BACKLOG) < 0)
+    {
+        printf("Listen failed on port %s\n", argv[1]);
+        exit(0);
+    }
+    else 
+    // Add listen socket to socket set we are monitoring
+    {
+        FD_ZERO(&openSockets);
+        FD_SET(listenServerSock, &openSockets);
+
+    // Maxfd needs to be equal to bigger size of socket
+        if(listenServerSock > listenSock) 
+        {
+          maxfd = listenServerSock + 1;
+        }
     }
 
     finished = false;
