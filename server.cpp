@@ -50,6 +50,17 @@ class Client
     ~Client(){}            // Virtual destructor defined for base class
 };
 
+class Server
+{
+  public:
+    int sock;                   // socket of server connection
+    bool ifClient;              // is it client or server?
+    std::string name;           // Limit length of name of server user
+
+    Server(int socket) : sock(socket){} 
+
+    ~Server(){}            // Virtual destructor defined for base class
+};
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -58,6 +69,7 @@ class Client
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
+std::map<int, Server*> server; // Lookup table for per Server information
 
 // Open socket for specified port.
 //
@@ -226,6 +238,7 @@ int main(int argc, char* argv[])
     bool finished;
     int listenSock;                 // Socket for connections to server
     int clientSock;                 // Socket of connecting client
+    int serverSock;                 // Socket connecting for server
     fd_set openSockets;             // Current open sockets 
     fd_set readSockets;             // Socket list for select()        
     fd_set exceptSockets;           // Exception socket list
@@ -234,9 +247,9 @@ int main(int argc, char* argv[])
     socklen_t clientLen;
     char buffer[1025];              // buffer for reading from clients
 
-    if(argc != 2)
+    if(argc != 3)
     {
-        printf("Usage: chat_server <ip port>\n");
+        printf("Client usage: chat_server <ip port>\n");
         exit(0);
     }
 
@@ -294,7 +307,7 @@ int main(int argc, char* argv[])
                // Decrement the number of sockets waiting to be dealt with
                n--;
 
-               printf("Client connected on server: %d\n", clientSock);
+               printf("Client connected on server: %d\n", atoi(argv[1]));
             }
             // Now check for commands from clients
             while(n-- > 0)
