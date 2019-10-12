@@ -50,6 +50,19 @@ class Client
     ~Client(){}            // Virtual destructor defined for base class
 };
 
+class Server
+{
+  public:
+    int sock;              // socket of client connection
+    std::string name;      // Limit length of name of server's user
+    std::string IP;
+    std::string port;
+
+    Server(int socket) : sock(socket){} 
+
+    ~Server(){}            // Virtual destructor defined for base class
+};
+
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -58,6 +71,8 @@ class Client
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
+std::map<int, Client*> servers; // Lookup table for per Client information
+
 
 // Open socket for specified port.
 //
@@ -157,7 +172,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   while(stream >> token)
       tokens.push_back(token);
 
-  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 2))
+  if((tokens[0].compare("LISTSERVERS") == 0) && (tokens.size() == 2))
   {
      clients[clientSocket]->name = tokens[1];
   }
@@ -182,6 +197,78 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
      // Reducing the msg length by 1 loses the excess "," - which
      // granted is totally cheating.
      send(clientSocket, msg.c_str(), msg.length()-1, 0);
+
+  }
+  // This is slightly fragile, since it's relying on the order
+  // of evaluation of the if statement.
+  else if((tokens[0].compare("MSG") == 0) && (tokens[1].compare("ALL") == 0))
+  {
+      std::string msg;
+      for(auto i = tokens.begin()+2;i != tokens.end();i++) 
+      {
+          msg += *i + " ";
+      }
+
+      for(auto const& pair : clients)
+      {
+          send(pair.second->sock, msg.c_str(), msg.length(),0);
+      }
+  }
+  else if(tokens[0].compare("MSG") == 0)
+  {
+      for(auto const& pair : clients)
+      {
+          if(pair.second->name.compare(tokens[1]) == 0)
+          {
+              std::string msg;
+              for(auto i = tokens.begin()+2;i != tokens.end();i++) 
+              {
+                  msg += *i + " ";
+              }
+              send(pair.second->sock, msg.c_str(), msg.length(),0);
+          }
+      }
+  }
+  else
+  {
+      std::cout << "Unknown command from client:" << buffer << std::endl;
+  }
+     
+}
+
+void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
+                  char *buffer) 
+{
+  std::vector<std::string> tokens;
+  std::string token;
+
+  // Split command from client into tokens for parsing
+  std::stringstream stream(buffer);
+
+  while(stream >> token)
+      tokens.push_back(token);
+
+  if((tokens[0].compare("LISTSERVERS") == 0) && (tokens.size() == 2))
+  {
+     servers[serverSocket]->name = tokens[1];
+  }
+  else if(tokens[0].compare("KEEPALIVE") == 0)
+  {
+      //TODO
+  }
+  else if(tokens[0].compare("WHO") == 0)
+  {
+     std::cout << "Who is logged on" << std::endl;
+     std::string msg;
+
+     for(auto const& names : clients)
+     {
+        msg += names.second->name + ",";
+
+     }
+     // Reducing the msg length by 1 loses the excess "," - which
+     // granted is totally cheating.
+     send(serverSocket, msg.c_str(), msg.length()-1, 0);
 
   }
   // This is slightly fragile, since it's relying on the order
