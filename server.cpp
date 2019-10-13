@@ -1,10 +1,12 @@
 //
 // Simple chat server for TSAM-409
 //
-// Command line: ./chat_server 4000 
+// Command line: ./tsamvgroup43 <port>
 //
-// Author: Jacky Mallett (jacky@ru.is)
+// Teacher: Jacky Mallett (jacky@ru.is)
 //
+// Authors: Helga Hilmarsdóttir (helga13@ru.is) and Kara Líf Ingibergsdóttir (kara17@ru.is)
+
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -20,7 +22,8 @@
 #include <algorithm>
 #include <map>
 #include <vector>
-
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -43,7 +46,7 @@ class Client
 {
   public:
     int sock;              // socket of client connection
-    std::string name;           // Limit length of name of client's user
+    std::string name;      // Limit length of name of client's user
 
     Client(int socket) : sock(socket){} 
 
@@ -53,12 +56,20 @@ class Client
 class Server
 {
   public:
-    int sock;              // socket of client connection
+    int sock;              // socket of server connection
     std::string name;      // Limit length of name of server's user
-    std::string IP;
-    std::string port;
+    std::string ip;        // server's ip address
+    int port;              // servers's port 
 
-    Server(int socket) : sock(socket){} 
+    Server(int socket, std::string nam, std::string ipAddress, int por)
+    {
+      //initialize the socket, name, ip address and the port
+      sock = socket;
+      nam = name;
+      ipAddress = ip;
+      por = port;
+
+    } 
 
     ~Server(){}            // Virtual destructor defined for base class
 };
@@ -71,7 +82,7 @@ class Server
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
-std::map<int, Client*> servers; // Lookup table for per Client information
+std::map<int, Server*> servers; // Lookup table for per Server information
 
 
 // Open socket for specified port.
@@ -236,78 +247,97 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
      
 }
 
-void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
-                  char *buffer) 
+
+//code given by Jackie to get the IP address
+std::string ip()
+{
+  struct ifaddrs *myaddrs, *ifa;
+    void *in_addr;
+    char buf[64];
+
+    if(getifaddrs(&myaddrs) != 0)
+    {
+        perror("getifaddrs");
+        exit(1);
+    }
+
+    for (ifa = myaddrs; ifa != NULL; ifa = ifa->ifa_next)
+    {
+        if (ifa->ifa_addr == NULL)
+            continue;
+        if (!(ifa->ifa_flags & IFF_UP))
+            continue;
+
+        switch (ifa->ifa_addr->sa_family)
+        {
+            case AF_INET:
+            {
+                struct sockaddr_in *s4 = (struct sockaddr_in *)ifa->ifa_addr;
+                in_addr = &s4->sin_addr;
+                break;
+            }
+
+            case AF_INET6:
+            {
+                struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)ifa->ifa_addr;
+                in_addr = &s6->sin6_addr;
+                break;
+            }
+
+            default:
+                continue;
+        }
+
+        if (!inet_ntop(ifa->ifa_addr->sa_family, in_addr, buf, sizeof(buf)))
+        {
+            printf("%s: inet_ntop failed!\n", ifa->ifa_name);
+        }
+        else  
+        {
+            printf("%s: %s\n", ifa->ifa_name, buf);
+        }
+    }
+
+
+    freeifaddrs(myaddrs);
+    return std::string(buf);
+}
+
+// Process command from another server to the server
+
+void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, char *buffer, int port) 
 {
   std::vector<std::string> tokens;
   std::string token;
 
-  // Split command from client into tokens for parsing
+  // Split command from server into tokens for parsing
   std::stringstream stream(buffer);
 
   while(stream >> token)
       tokens.push_back(token);
 
-  if((tokens[0].compare("LISTSERVERS") == 0) && (tokens.size() == 2))
+    //try to recieve LISTSERVERS command and send back servers information 
+  if((tokens[0].compare("\x01LISTSERVERS") == 0) && (tokens.size() == 3))
   {
-     servers[serverSocket]->name = tokens[1];
-  }
+      //string with the information we want to send to the other server, who am i? the group name
+      //ip address and port. 
+     std::string msg = "SERVERS, tsamvgroup43, " + ip() + "," + std::to_string(port);
+
+     for(auto&&server : servers)
+     {
+        msg += server.second->name + "," + server.second->ip + "," + std::to_string(server.second->port) + ";";
+     }
+     //send the message 
+     send(serverSocket, msg.c_str(), msg.length()-1, 0);
+   }
+
   else if(tokens[0].compare("KEEPALIVE") == 0)
   {
       //TODO
-  }
-  else if(tokens[0].compare("WHO") == 0)
-  {
-     std::cout << "Who is logged on" << std::endl;
-     std::string msg;
-
-     for(auto const& names : clients)
-     {
-        msg += names.second->name + ",";
-
-     }
-     // Reducing the msg length by 1 loses the excess "," - which
-     // granted is totally cheating.
-     send(serverSocket, msg.c_str(), msg.length()-1, 0);
-
-  }
-  // This is slightly fragile, since it's relying on the order
-  // of evaluation of the if statement.
-  else if((tokens[0].compare("MSG") == 0) && (tokens[1].compare("ALL") == 0))
-  {
-      std::string msg;
-      for(auto i = tokens.begin()+2;i != tokens.end();i++) 
-      {
-          msg += *i + " ";
-      }
-
-      for(auto const& pair : clients)
-      {
-          send(pair.second->sock, msg.c_str(), msg.length(),0);
-      }
-  }
-  else if(tokens[0].compare("MSG") == 0)
-  {
-      for(auto const& pair : clients)
-      {
-          if(pair.second->name.compare(tokens[1]) == 0)
-          {
-              std::string msg;
-              for(auto i = tokens.begin()+2;i != tokens.end();i++) 
-              {
-                  msg += *i + " ";
-              }
-              send(pair.second->sock, msg.c_str(), msg.length(),0);
-          }
-      }
-  }
-  else
-  {
-      std::cout << "Unknown command from client:" << buffer << std::endl;
-  }
-     
+  }     
 }
 
+//code from given client.cpp
 void listenServer(int serverSocket)
 {
     int nread;                                  // Bytes read from socket
@@ -343,6 +373,7 @@ int main(int argc, char* argv[])
     struct sockaddr_in client;
     socklen_t clientLen;
     char buffer[1025];              // buffer for reading from clients
+    bool ifClient = true;
 
     if(argc < 2)
     {
@@ -350,6 +381,8 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
+    //if the arguments are three than this is server connecting (./server2 <ip-address> <port>)
+    //code from given client.cpp
     if(argc == 3)
     {
          struct addrinfo hints, *svr;              // Network host entry for server
@@ -359,8 +392,8 @@ int main(int argc, char* argv[])
          char buffer[1025];                        // buffer for writing to server
          bool finished;                   
          int set = 1;                              // Toggle for setsockopt
-
-         hints.ai_family   = AF_INET;            // IPv4 only addresses
+         ifClient = false;                         //to know if it is server og client that is connecting
+         hints.ai_family   = AF_INET;               // IPv4 only addresses
          hints.ai_socktype = SOCK_STREAM;
 
          memset(&hints,   0, sizeof(hints));
@@ -481,8 +514,11 @@ int main(int argc, char* argv[])
             // Now check for commands from clients
             while(n-- > 0)
             {
-               for(auto const& pair : clients)
+              //trying to distinguish between client and server
+               if(ifClient == true)
                {
+                for(auto const& pair : clients)
+                {
                   Client *client = pair.second;
 
                   if(FD_ISSET(client->sock, &readSockets))
@@ -506,7 +542,33 @@ int main(int argc, char* argv[])
                       }
                   }
                }
-            }
+             }else
+             {
+              for(auto const& pair : servers)
+                {
+                  Server *server = pair.second;
+
+                  if(FD_ISSET(server->sock, &readSockets))
+                  {
+                      // recv() == 0 means client has closed connection
+                      if(recv(server->sock, buffer, sizeof(buffer), MSG_DONTWAIT) == 0)
+                      {
+                          printf("Server closed connection: %d", server->sock);
+                          close(server->sock);      
+
+                      }
+                      // We don't check for -1 (nothing received) because select()
+                      // only triggers if there is something on the socket for us.
+                      else
+                      {
+                          //std::cout << buffer << std::endl;
+                          /*serverCommand(server->sock, &openSockets, &maxfds, 
+                                        buffer);*/
+                      }
+                  }
+               }
+             }
+          }
         }
     }
 }
